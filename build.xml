@@ -11,7 +11,7 @@
 
   <target name="compile">
     <mkdir dir="${build}"/>
-    <javac srcdir="${src}" destdir="${build}">
+    <javac srcdir="${src}" destdir="${build}" includeantruntime="false">
       <classpath>
 	<pathelement path="${classpath}"/>
 	<fileset dir="${lib}">
@@ -26,6 +26,12 @@
     <property name="fullName" value="${projName}-${version}"/>
     <mkdir dir="${dist}"/>
     <mkdir dir="${dist}/${fullName}"/>
+
+    <copy file="COPYING" todir="${dist}/${fullName}"/>
+    <copy file="README.md" tofile="${dist}/${fullName}/README"/>
+    <copy todir="${dist}/${fullName}">
+      <fileset dir="${lib}" includes="LICENSE.*"/>
+    </copy>
 
     <jar jarfile="${dist}/${fullName}/${fullName}.jar" basedir="${build}">
       <restrict>
@@ -42,8 +48,6 @@
 	<attribute name="Main-Class" value="${mainClass}"/>
       </manifest>
     </jar>
-
-    <jar jarfile="${dist}/${fullName}/${fullName}.src.jar" basedir="${src}"/>
 
     <zip destFile="${dist}/${fullName}.zip">
       <zipfileset dir="${dist}/${fullName}" prefix="${fullName}"/>
