@@ -8,11 +8,11 @@ package jsonbrowse;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
@@ -81,6 +81,11 @@ public class JsonBrowse extends javax.swing.JFrame implements Runnable {
 
         jWatchForChanges.setSelected(true);
         jWatchForChanges.setText("Watch file for changes");
+        jWatchForChanges.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jWatchForChangesActionPerformed(evt);
+            }
+        });
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
         getContentPane().setLayout(layout);
@@ -109,6 +114,11 @@ public class JsonBrowse extends javax.swing.JFrame implements Runnable {
         setVisible(false);
         System.exit(0);
     }//GEN-LAST:event_jButtonQuitActionPerformed
+
+    private void jWatchForChangesActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jWatchForChangesActionPerformed
+        // Toggle file change watching
+        watching = !watching;
+    }//GEN-LAST:event_jWatchForChangesActionPerformed
 
 
     /**
@@ -175,16 +185,16 @@ public class JsonBrowse extends javax.swing.JFrame implements Runnable {
     public void run() {
         try {
             WatchKey key = watcher.take();
-            while (key != null && watching == true) {
-                for (WatchEvent event : key.pollEvents()) {
-                    System.out.format("Received %s event for file %s\n",
-                            event.kind(), event.context());
-                    
-                    if (event.context() instanceof Path) {
-                        Path path = (Path)(event.context());
-                        if (path.getFileName().equals(jsonFilePath.getFileName())) {
-                            if (path.toFile().length()>0)
-                                updateModel();
+            while (key != null) {
+
+                if (watching) {
+                    for (WatchEvent event : key.pollEvents()) {
+                        if (event.context() instanceof Path) {
+                            Path path = (Path)(event.context());
+                            if (path.getFileName().equals(jsonFilePath.getFileName())) {
+                                if (path.toFile().length()>0)
+                                    updateModel();
+                            }
                         }
                     }
                 }
@@ -214,13 +224,7 @@ public class JsonBrowse extends javax.swing.JFrame implements Runnable {
                     break;
                 }
             }
-        } catch (ClassNotFoundException ex) {
-            java.util.logging.Logger.getLogger(JsonBrowse.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (InstantiationException ex) {
-            java.util.logging.Logger.getLogger(JsonBrowse.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (IllegalAccessException ex) {
-            java.util.logging.Logger.getLogger(JsonBrowse.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
-        } catch (javax.swing.UnsupportedLookAndFeelException ex) {
+        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | javax.swing.UnsupportedLookAndFeelException ex) {
             java.util.logging.Logger.getLogger(JsonBrowse.class.getName()).log(java.util.logging.Level.SEVERE, null, ex);
         }
         //</editor-fold>
@@ -228,7 +232,7 @@ public class JsonBrowse extends javax.swing.JFrame implements Runnable {
         String fileName;
         
         // Get name of JSON file
-        
+        Path jsonFilePath;
         if (args.length<1) {
             
             JFileChooser fc = new JFileChooser(System.getProperty("user.dir"));
@@ -236,25 +240,28 @@ public class JsonBrowse extends javax.swing.JFrame implements Runnable {
             fc.setFileFilter(new FileNameExtensionFilter(
                     "JSON files (*.json/*.txt)", "json", "txt"));
             if ((fc.showOpenDialog(null)==JFileChooser.APPROVE_OPTION)) {
-                fileName = fc.getSelectedFile().getAbsolutePath();
+                jsonFilePath = fc.getSelectedFile().toPath().toAbsolutePath();
             } else {
                 return;
             }
         } else {
-            fileName = args[0];
+            Path path = Paths.get(args[0]);
+            if(!path.isAbsolute())
+                jsonFilePath = Paths.get(System.getProperty("user.dir")).resolve(path);
+            else
+                jsonFilePath = path;
         }
         
         // Run app
         
         try {
-            Path jsonFilePath = (new File(fileName)).toPath();
             JsonBrowse app = new JsonBrowse(jsonFilePath);
             app.setVisible(true);
         } catch (FileNotFoundException ex) {
-            System.out.println("Input file '" + fileName + "' not found.");
+            System.out.println("Input file '" + jsonFilePath + "' not found.");
             System.exit(1);
         } catch (IOException ex) {
-            System.out.println("Error reading from file '" + fileName + "'.");
+            System.out.println("Error reading from file '" + jsonFilePath + "'.");
             System.exit(1);
         } catch (InterruptedException ex) {
             Logger.getLogger(JsonBrowse.class.getName()).log(Level.SEVERE, null, ex);
