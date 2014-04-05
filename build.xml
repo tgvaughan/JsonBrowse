@@ -1,0 +1,59 @@
+<project default="build" basedir=".">
+
+  <property name="projName" value="JsonBrowse"/>
+  <property name="version" value="1.0.0"/>
+  <property name="mainClass" value="jsonbrowse.JsonBrowse"/>
+
+  <property name="src" location="src"/>
+  <property name="lib" location="lib"/>
+  <property name="build" location="build"/>
+  <property name="dist" location="dist"/>
+
+  <target name="compile">
+    <mkdir dir="${build}"/>
+    <javac srcdir="${src}" destdir="${build}">
+      <classpath>
+	<pathelement path="${classpath}"/>
+	<fileset dir="${lib}">
+	  <include name="**/*.jar"/>
+	</fileset>
+      </classpath>
+    </javac>
+  </target>
+
+  <target name="build" depends="compile">
+
+    <property name="fullName" value="${projName}-${version}"/>
+    <mkdir dir="${dist}"/>
+    <mkdir dir="${dist}/${fullName}"/>
+
+    <jar jarfile="${dist}/${fullName}/${fullName}.jar" basedir="${build}">
+      <restrict>
+        <not>
+          <name name="META-INF/**"/>
+        </not>
+	<archives>
+	  <zips>
+	    <fileset dir="${lib}" includes="**/*.jar"/>
+	  </zips>
+	</archives>
+      </restrict>
+      <manifest>
+	<attribute name="Main-Class" value="${mainClass}"/>
+      </manifest>
+    </jar>
+
+    <jar jarfile="${dist}/${fullName}/${fullName}.src.jar" basedir="${src}"/>
+
+    <zip destFile="${dist}/${fullName}.zip">
+      <zipfileset dir="${dist}/${fullName}" prefix="${fullName}"/>
+    </zip>
+
+  </target>
+
+  <target name="clean">
+    <delete dir="${dist}"/>
+    <delete dir="${build}"/>
+  </target>
+
+</project>

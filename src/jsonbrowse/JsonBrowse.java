@@ -8,28 +8,50 @@ package jsonbrowse;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.util.Iterator;
-import javax.swing.event.TreeModelListener;
-import javax.swing.tree.TreeModel;
-import javax.swing.tree.TreePath;
+import java.util.Map.Entry;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.swing.JFileChooser;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.DefaultTreeModel;
 
 /**
  * @author Tim Vaughan <tgvaughan@gmail.com>
  */
-public class JsonBrowse extends javax.swing.JFrame {
+public class JsonBrowse extends javax.swing.JFrame implements Runnable {
 
+    private WatchService watcher;
+    private Thread watchThread;
+    private boolean watching;
+    
+    private final Path jsonFilePath;
+    
     /**
      * Creates new form JsonBrowseApp
      * 
-     * @param rootNode Root JsonNode.
+     * @param jsonFilePath
+     * @throws java.io.IOException
+     * @throws java.lang.InterruptedException
      */
-    public JsonBrowse(JsonNode rootNode) {
+    public JsonBrowse(Path jsonFilePath) throws IOException, InterruptedException {
         initComponents();
         
-        jTree.setModel(new JsonTreeModel(rootNode));
+        this.jsonFilePath = jsonFilePath;
+        updateModel();
+
+        watching = true;
+        startWatchThread();
     }
 
     /**
@@ -44,6 +66,7 @@ public class JsonBrowse extends javax.swing.JFrame {
         jScrollPane = new javax.swing.JScrollPane();
         jTree = new javax.swing.JTree();
         jButtonQuit = new javax.swing.JButton();
+        jWatchForChanges = new javax.swing.JCheckBox();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
 
@@ -56,13 +79,17 @@ public class JsonBrowse extends javax.swing.JFrame {
             }
         });
 
+        jWatchForChanges.setSelected(true);
+        jWatchForChanges.setText("Watch file for changes");
+
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
         getContentPane().setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addComponent(jScrollPane, javax.swing.GroupLayout.DEFAULT_SIZE, 400, Short.MAX_VALUE)
             .addGroup(layout.createSequentialGroup()
-                .addGap(0, 0, Short.MAX_VALUE)
+                .addComponent(jWatchForChanges)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(jButtonQuit))
         );
         layout.setVerticalGroup(
@@ -70,7 +97,9 @@ public class JsonBrowse extends javax.swing.JFrame {
             .addGroup(layout.createSequentialGroup()
                 .addComponent(jScrollPane, javax.swing.GroupLayout.DEFAULT_SIZE, 269, Short.MAX_VALUE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jButtonQuit))
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jButtonQuit)
+                    .addComponent(jWatchForChanges)))
         );
 
         pack();
@@ -81,6 +110,94 @@ public class JsonBrowse extends javax.swing.JFrame {
         System.exit(0);
     }//GEN-LAST:event_jButtonQuitActionPerformed
 
+
+    /**
+     * Update tree to reflect current JSON data in file.
+     * 
+     * @param absoluteFileName *absolute* path of file.
+     * @throws FileNotFoundException
+     * @throws IOException 
+     */
+    private void updateModel() throws FileNotFoundException, IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode rootJsonNode = mapper.readTree(
+                new FileInputStream(jsonFilePath.toString()));
+        
+        // Construct tree model
+        DefaultMutableTreeNode rootNode = buildTree("root", rootJsonNode);
+        
+        jTree.setModel(new DefaultTreeModel(rootNode));
+    }
+    
+    /**
+     * Builds a tree of TreeNode objects using the tree under the
+     * given JsonNode.
+     * 
+     * @param name Text to be associated with node
+     * @param node
+     * @return root TreeNode
+     */
+    private DefaultMutableTreeNode buildTree(String name, JsonNode node) {
+        DefaultMutableTreeNode treeNode = new DefaultMutableTreeNode(name);
+        
+        Iterator<Entry<String,JsonNode>> it = node.fields();
+        while (it.hasNext()) {
+            Entry<String, JsonNode> entry = it.next();
+            treeNode.add(buildTree(entry.getKey(), entry.getValue()));
+        }
+        
+        if (node.isArray()) {
+            for (int i=0; i<node.size(); i++) {
+                JsonNode child = node.get(i);
+                if (child.isValueNode())
+                    treeNode.add(new DefaultMutableTreeNode(child.asText()));
+                else
+                    treeNode.add(buildTree(String.format("[%d]", i), child));
+            }
+        } else if (node.isValueNode()) {
+            treeNode.add(new DefaultMutableTreeNode(node.asText()));
+        }
+        
+        return treeNode;
+    }
+
+
+    private void startWatchThread() throws IOException {
+        watcher = jsonFilePath.getFileSystem().newWatchService();
+        watchThread = new Thread(this, "FileWatcher");
+        watchThread.start();
+        
+        jsonFilePath.getParent().register(watcher,
+                StandardWatchEventKinds.ENTRY_MODIFY);
+    }
+    
+    @Override
+    public void run() {
+        try {
+            WatchKey key = watcher.take();
+            while (key != null && watching == true) {
+                for (WatchEvent event : key.pollEvents()) {
+                    System.out.format("Received %s event for file %s\n",
+                            event.kind(), event.context());
+                    
+                    if (event.context() instanceof Path) {
+                        Path path = (Path)(event.context());
+                        if (path.getFileName().equals(jsonFilePath.getFileName())) {
+                            if (path.toFile().length()>0)
+                                updateModel();
+                        }
+                    }
+                }
+                key.reset();
+                key = watcher.take();
+            }
+        } catch (InterruptedException | IOException ex) {
+            Logger.getLogger(JsonBrowse.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        System.out.println("Stopping thread.");
+    }
+
+    
     /**
      * @param args the command line arguments
      */
@@ -108,97 +225,48 @@ public class JsonBrowse extends javax.swing.JFrame {
         }
         //</editor-fold>
 
-        // Read in JSON file
+        String fileName;
+        
+        // Get name of JSON file
+        
         if (args.length<1) {
-            System.out.println("Usage: JsonBrowse file.json");
-            System.exit(0);
+            
+            JFileChooser fc = new JFileChooser(System.getProperty("user.dir"));
+            fc.setDialogTitle("Select JSON file...");
+            fc.setFileFilter(new FileNameExtensionFilter(
+                    "JSON files (*.json/*.txt)", "json", "txt"));
+            if ((fc.showOpenDialog(null)==JFileChooser.APPROVE_OPTION)) {
+                fileName = fc.getSelectedFile().getAbsolutePath();
+            } else {
+                return;
+            }
+        } else {
+            fileName = args[0];
         }
         
-        ObjectMapper mapper = new ObjectMapper();
-        JsonNode rootNode;
-
+        // Run app
+        
         try {
-            rootNode = mapper.readTree(new FileInputStream(args[0]));
-            JsonBrowse app = new JsonBrowse(rootNode);
+            Path jsonFilePath = (new File(fileName)).toPath();
+            JsonBrowse app = new JsonBrowse(jsonFilePath);
             app.setVisible(true);
         } catch (FileNotFoundException ex) {
-            System.out.println("Input file '" + args[0] + "' not found.");
+            System.out.println("Input file '" + fileName + "' not found.");
             System.exit(1);
         } catch (IOException ex) {
-            System.out.println("Error reading from file '" + args[0] + "'.");
+            System.out.println("Error reading from file '" + fileName + "'.");
             System.exit(1);
-        }
+        } catch (InterruptedException ex) {
+            Logger.getLogger(JsonBrowse.class.getName()).log(Level.SEVERE, null, ex);
+        } 
+
     }
     
-    public class JsonTreeModel implements TreeModel {
-
-        JsonNode rootNode;
-        
-        public JsonTreeModel(JsonNode rootNode) {
-            this.rootNode = rootNode;
-        }
-        
-        @Override
-        public Object getRoot() {
-            return rootNode;
-        }
-
-        @Override
-        public Object getChild(Object parent, int index) {
-            JsonNode jnode = (JsonNode)parent;
-            return jnode.get(index);
-        }
-
-        @Override
-        public int getChildCount(Object parent) {
-            JsonNode jnode = (JsonNode)parent;
-            return jnode.size();
-        }
-
-        @Override
-        public boolean isLeaf(Object node) {
-            JsonNode jnode = (JsonNode)node;
-            return jnode.size() == 0;
-        }
-
-        @Override
-        public void valueForPathChanged(TreePath path, Object newValue) {
-        }
-
-        @Override
-        public int getIndexOfChild(Object parent, Object child) {
-            
-            JsonNode jparent = (JsonNode)parent;
-            JsonNode jchild = (JsonNode)child;
-            
-            int i=0;
-            Iterator<JsonNode> it = jparent.elements();
-            while (it.hasNext()) {
-                JsonNode thisChild = it.next();
-                if (jchild.equals(thisChild))
-                    break;
-                i += 1;
-            }
-            if (i<jparent.size())
-                return i;
-            else
-                return -1;
-        }
-
-        @Override
-        public void addTreeModelListener(TreeModelListener l) {
-        }
-
-        @Override
-        public void removeTreeModelListener(TreeModelListener l) {
-        }
-        
-    }
-
     
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JButton jButtonQuit;
     private javax.swing.JScrollPane jScrollPane;
     private javax.swing.JTree jTree;
+    private javax.swing.JCheckBox jWatchForChanges;
     // End of variables declaration//GEN-END:variables
 }
